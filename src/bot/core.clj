@@ -1,5 +1,14 @@
+;;
+;; Kimsufi.com bot, http://twitter.com/KimsufiBot
+;;
+;; Written by antekone
+;; http://anadoxin.org/blog
+;;
 ;; vim:tw=0:et:
 
+;;
+;; I was using this to learn Clojure, beware of dragons in this bad code!
+;;
 (ns bot.core
     (:gen-class)
     (:require [clojure.string :as string])
@@ -8,25 +17,35 @@
     (:use [twitter.oauth] [twitter.callbacks] [twitter.callbacks.handlers] [twitter.api.restful])
     (:import (twitter.callbacks.protocols SyncSingleCallback)))
 
+;;
 ;; Parameters (in milliseconds)
+;;
 (def kimsufi-crawl-interval 50000) ;; every 50 seconds
 (def twitter-update-interval 10000) ;; every 10 seconds, but touches twitter only if there is any data to be written
 
+;;
 ;; Load login/password information from `db.txt` file.
+;;
 (defn get-db-txt [] (zipmap [:user :pass] (map string/trim (string/split (slurp "db.txt") #","))))
+
+;; Accessors for get-db-txt's structure
 (defn db-get-username [] ((get-db-txt) :user))
 (defn db-get-password [] ((get-db-txt) :pass))
+
 (def mysql-db {:subprotocol "mysql" :subname "//127.0.0.1/kimsufi" :user (db-get-username) :password (db-get-password)})
 
+;;
 ;; Load OAuth keys from `oauth.txt` file.
+;;
 (defn oauth-get-keys [] (zipmap [:key :secret :ukey :usecret] (map string/trim (string/split (slurp "oauth.txt") #","))))
+
+;; Accessors for oauth-get-key's structure
 (defn oauth-get-key [] ((oauth-get-keys) :key))
 (defn oauth-get-secret [] ((oauth-get-keys) :secret))
 (defn oauth-get-user-key [] ((oauth-get-keys) :ukey))
 (defn oauth-get-user-secret [] ((oauth-get-keys) :usecret))
-(def oauth-creds (make-oauth-creds (oauth-get-key) (oauth-get-secret) (oauth-get-user-key) (oauth-get-user-secret)))
 
-(defn tweet [text] (statuses-update :oauth-creds oauth-creds :params { :status text }))
+(def oauth-creds (make-oauth-creds (oauth-get-key) (oauth-get-secret) (oauth-get-user-key) (oauth-get-user-secret)))
 
 ;; (defn get-default-input [] (slurp "data.txt"))
 (defn get-default-input [] (slurp "https://ws.ovh.com/dedicated/r2/ws.dispatcher/getAvailability2"))
@@ -151,6 +170,8 @@
     (let [df (java.text.SimpleDateFormat. "dd/MM/yyyy HH:mm")]
         (.format df date-object)))
 
+(defn tweet [text] (statuses-update :oauth-creds oauth-creds :params { :status text }))
+
 (defn twitter-update-helper [item]
     (let [event-id (item :id) event-time (get-twitter-date-str (item :now)) event-plan (item :plan) event-zone (item :zone) event-avail (item :avail)]
         (let [tweet-text (format "%s %s in %s (%s) #kimsufi"
@@ -171,4 +192,7 @@
     (future (run-every twitter-update-main twitter-update-interval))
     (future (run-every kimsufi-main kimsufi-crawl-interval)))
 
+;;
+;; REPL stuff
+;;
 (defn r [] (use 'bot.core :reload))
