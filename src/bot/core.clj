@@ -1,14 +1,32 @@
+;; vim:tw=0:et:
+
 (ns bot.core
     (:gen-class)
     (:require [clojure.string :as string])
     (:require [clojure.java.jdbc :as sql])
-    (:require [clojure.data.json :as json]))
+    (:require [clojure.data.json :as json])
+    (:use [twitter.oauth] [twitter.callbacks] [twitter.callbacks.handlers] [twitter.api.restful])
+    (:import (twitter.callbacks.protocols SyncSingleCallback)))
+
+;; Parameters (in milliseconds)
+(def kimsufi-crawl-interval 50000) ;; every 50 seconds
+(def twitter-update-interval 10000) ;; every 10 seconds, but touches twitter only if there is any data to be written
 
 ;; Load login/password information from `db.txt` file.
 (defn get-db-txt [] (zipmap [:user :pass] (map string/trim (string/split (slurp "db.txt") #","))))
 (defn db-get-username [] ((get-db-txt) :user))
 (defn db-get-password [] ((get-db-txt) :pass))
 (def mysql-db {:subprotocol "mysql" :subname "//127.0.0.1/kimsufi" :user (db-get-username) :password (db-get-password)})
+
+;; Load OAuth keys from `oauth.txt` file.
+(defn oauth-get-keys [] (zipmap [:key :secret :ukey :usecret] (map string/trim (string/split (slurp "oauth.txt") #","))))
+(defn oauth-get-key [] ((oauth-get-keys) :key))
+(defn oauth-get-secret [] ((oauth-get-keys) :secret))
+(defn oauth-get-user-key [] ((oauth-get-keys) :ukey))
+(defn oauth-get-user-secret [] ((oauth-get-keys) :usecret))
+(def oauth-creds (make-oauth-creds (oauth-get-key) (oauth-get-secret) (oauth-get-user-key) (oauth-get-user-secret)))
+
+(defn tweet [text] (statuses-update :oauth-creds oauth-creds :params { :status text }))
 
 ;; (defn get-default-input [] (slurp "data.txt"))
 (defn get-default-input [] (slurp "https://ws.ovh.com/dedicated/r2/ws.dispatcher/getAvailability2"))
@@ -23,6 +41,9 @@
         (if (not= (count last-entry) 0)
             ((first last-entry) :avail)
             true)))
+
+(defn db-set-tweettime-on [id]
+    (sql/update! mysql-db :states { :tweettime (sql-get-now) } ["id=?" id]))
 
 (defn update-db-helper [plan-name zone-name avail]
     (sql/insert! mysql-db :states { :plan plan-name :zone zone-name :avail avail :now (sql-get-now) :tweettime nil }))
@@ -106,7 +127,17 @@
                 (let [plan-name (avail-data 0) zone-name (avail-data 1) available (avail-data 2)]
                     (println (format "%s: %s in %s" (if available "yes" "no ") (plan-name-to-str plan-name) (zone-name-to-str zone-name)))))))
 
-(defn -main [& args]
+(defn run-every [func ms]
+    (do
+        (try
+            (func)
+        (catch Exception e
+            (println "Exception occured in a thread: " e)))
+
+        (Thread/sleep ms)
+        (recur func ms)))
+
+(defn kimsufi-main []
     (let [idata (check-availability (get-default-input))]
         (dorun
             (try
@@ -115,5 +146,29 @@
                 (println "Can't update the database -- skipping this step!")))
 
             (console-output idata))))
+
+(defn get-twitter-date-str [date-object]
+    (let [df (java.text.SimpleDateFormat. "dd/MM/yyyy HH:mm")]
+        (.format df date-object)))
+
+(defn twitter-update-helper [item]
+    (let [event-id (item :id) event-time (get-twitter-date-str (item :now)) event-plan (item :plan) event-zone (item :zone) event-avail (item :avail)]
+        (let [tweet-text (format "%s %s in %s (%s) #kimsufi"
+                                 (if (true? event-avail) "Available! -" "Not available anymore:")
+                                 (plan-name-to-str event-plan)
+                                 (zone-name-to-str event-zone)
+                                 event-time)]
+            (println (format "Tweeting: %s" tweet-text))
+            (tweet tweet-text)
+            (db-set-tweettime-on event-id))))
+
+(defn twitter-update-main []
+    (let [item (first (sql/query mysql-db ["select id,plan,zone,avail,now from states where tweettime is null order by id asc limit 1"]))]
+        (cond (= nil item) true
+              :else (twitter-update-helper item))))
+
+(defn -main [& args]
+    (future (run-every twitter-update-main twitter-update-interval))
+    (future (run-every kimsufi-main kimsufi-crawl-interval)))
 
 (defn r [] (use 'bot.core :reload))
