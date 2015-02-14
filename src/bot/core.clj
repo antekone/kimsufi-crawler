@@ -8,7 +8,7 @@
 (defn get-db-txt [] (zipmap [:user :pass] (map string/trim (string/split (slurp "db.txt") #","))))
 (defn db-get-username [] ((get-db-txt) :user))
 (defn db-get-password [] ((get-db-txt) :pass))
-(defn mysql-db [] {:subprotocol "mysql" :subname "//127.0.0.1/kimsufi" :user (db-get-username) :password (db-get-password)})
+(def mysql-db {:subprotocol "mysql" :subname "//127.0.0.1/kimsufi" :user (db-get-username) :password (db-get-password)})
 
 ;; (defn get-default-input [] (slurp "data.txt"))
 (defn get-default-input [] (slurp "https://ws.ovh.com/dedicated/r2/ws.dispatcher/getAvailability2"))
